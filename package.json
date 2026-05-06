@@ -1,0 +1,21 @@
+{
+  "name": "codex-sub-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Small-footprint OpenAI-compatible proxy for ChatGPT/Codex subscription-backed models.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "start": "node dist/src/server.js",
+    "login": "node dist/src/cli/login.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
