@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "start": "node dist/src/server.js",
-    "login": "node dist/src/cli/login.js"
+    "login": "node dist/src/cli/login.js",
+    "smoke": "./scripts/smoke-test.sh"
   },
   "engines": {
     "node": ">=22"

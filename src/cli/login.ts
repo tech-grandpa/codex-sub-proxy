@@ -7,7 +7,8 @@ interface DeviceAuthResponse {
   verification_url?: string;
   verification_uri_complete?: string;
   expires_in?: number;
-  interval?: number;
+  expires_at?: string;
+  interval?: number | string;
   code_verifier?: string;
 }
 
@@ -15,7 +16,7 @@ interface PollResponse {
   authorization_code?: string;
   code?: string;
   code_verifier?: string;
-  error?: string;
+  error?: unknown;
   error_description?: string;
 }
 
@@ -27,10 +28,11 @@ interface OAuthTokenResponse {
 }
 
 const REDIRECT_URI = "https://auth.openai.com/deviceauth/callback";
+const CODEX_DEVICE_URL = "https://auth.openai.com/codex/device";
 
 async function main(): Promise<void> {
   const device = await startDeviceAuth();
-  const verificationUrl = device.verification_uri_complete ?? device.verification_uri ?? device.verification_url;
+  const verificationUrl = resolveVerificationUrl(device);
 
   if (!device.device_auth_id || !device.user_code || !verificationUrl) {
     throw new Error(`Unexpected device auth response: ${JSON.stringify(device)}`);
@@ -80,8 +82,8 @@ async function startDeviceAuth(): Promise<DeviceAuthResponse> {
 }
 
 async function pollForCode(device: DeviceAuthResponse): Promise<PollResponse> {
-  const intervalMs = Math.max(device.interval ?? 5, 1) * 1000;
-  const deadline = Date.now() + Math.max(device.expires_in ?? 900, 60) * 1000;
+  const intervalMs = Math.max(Number(device.interval ?? 5), 1) * 1000;
+  const deadline = pollDeadline(device);
 
   while (Date.now() < deadline) {
     await sleep(intervalMs);
@@ -103,8 +105,12 @@ async function pollForCode(device: DeviceAuthResponse): Promise<PollResponse> {
       return data;
     }
 
-    if (data.error && data.error !== "authorization_pending" && data.error !== "slow_down") {
-      throw new Error(`Device auth polling failed: ${data.error_description ?? data.error}`);
+    if (isPendingDeviceAuthorization(response.status, data)) {
+      continue;
+    }
+
+    if (data.error) {
+      throw new Error(`Device auth polling failed: ${data.error_description ?? formatPollError(data.error)}`);
     }
   }
 
@@ -140,7 +146,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+export function resolveVerificationUrl(device: Pick<DeviceAuthResponse, "verification_uri_complete" | "verification_uri" | "verification_url">): string {
+  return device.verification_uri_complete ?? device.verification_uri ?? device.verification_url ?? CODEX_DEVICE_URL;
+}
+
+export function pollDeadline(device: Pick<DeviceAuthResponse, "expires_at" | "expires_in">, now = Date.now()): number {
+  if (device.expires_at) {
+    const parsed = Date.parse(device.expires_at);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return now + Math.max(device.expires_in ?? 900, 60) * 1000;
+}
+
+export function isPendingDeviceAuthorization(status: number, data: PollResponse): boolean {
+  if (status === 403 || status === 404) return true;
+  return data.error === "authorization_pending" || data.error === "slow_down";
+}
+
+function formatPollError(error: unknown): string {
+  return typeof error === "string" ? error : JSON.stringify(error);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

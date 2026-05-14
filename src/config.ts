@@ -37,7 +37,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     openaiExpiresAt: parseExpiresAt(env.OPENAI_EXPIRES_AT),
     openaiChatgptAccountId: emptyToUndefined(env.OPENAI_CHATGPT_ACCOUNT_ID),
     codexBaseUrl: env.CODEX_BASE_URL ?? "https://chatgpt.com/backend-api/codex",
-    codexResponsesPath: env.CODEX_RESPONSES_PATH ?? "/v1/responses",
+    codexResponsesPath: env.CODEX_RESPONSES_PATH ?? "/responses",
     codexModels: models.length > 0 ? models : ["gpt-5.5"]
   };
 }
