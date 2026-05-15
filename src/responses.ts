@@ -5,6 +5,7 @@ import { buildResponsesUrl, TokenManager } from "./upstream.js";
 
 export interface ResponsesForwarder {
   forward(payload: Record<string, unknown>): Promise<unknown>;
+  stream(payload: Record<string, unknown>): Promise<Response>;
 }
 
 export class CodexResponsesForwarder implements ResponsesForwarder {
@@ -19,6 +20,11 @@ export class CodexResponsesForwarder implements ResponsesForwarder {
   }
 
   async forward(payload: Record<string, unknown>): Promise<unknown> {
+    const response = await this.stream(payload);
+    return readUpstreamResponse(response);
+  }
+
+  async stream(payload: Record<string, unknown>): Promise<Response> {
     const accessToken = await this.tokenManager.getAccessToken();
     const body = {
       ...normalizeResponsesPayload(stripUnsupportedParams(payload)),
@@ -43,24 +49,26 @@ export class CodexResponsesForwarder implements ResponsesForwarder {
       body: JSON.stringify(body)
     });
 
-    const data = await readUpstreamResponse(response);
     if (!response.ok) {
       throw new HttpError(502, "upstream_error", `Codex upstream failed with status ${response.status}`);
     }
 
-    return data;
+    return response;
   }
 }
 
 function normalizeResponsesPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  if (typeof payload.input !== "string") {
-    return payload;
+  const normalized = { ...payload };
+
+  if (normalized.instructions == null) {
+    normalized.instructions = "";
   }
 
-  return {
-    ...payload,
-    input: [{ role: "user", content: payload.input }]
-  };
+  if (typeof normalized.input === "string") {
+    normalized.input = [{ role: "user", content: normalized.input }];
+  }
+
+  return normalized;
 }
 
 async function readUpstreamResponse(response: Response): Promise<unknown> {

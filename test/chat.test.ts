@@ -25,6 +25,31 @@ test("chatToResponsesPayload converts system and developer messages into instruc
   assert.equal(payload.temperature, 0.8);
 });
 
+test("chatToResponsesPayload preserves structured file content", () => {
+  const payload = chatToResponsesPayload({
+    model: "gpt-5.5",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Summarize this file." },
+          { type: "file", file: { filename: "notes.txt", file_data: "data:text/plain;base64,aGVsbG8=" } }
+        ]
+      }
+    ]
+  });
+
+  assert.deepEqual(payload.input, [
+    {
+      role: "user",
+      content: [
+        { type: "input_text", text: "Summarize this file." },
+        { type: "input_file", filename: "notes.txt", file_data: "data:text/plain;base64,aGVsbG8=" }
+      ]
+    }
+  ]);
+});
+
 test("extractOutputText supports output_text and Responses output arrays", () => {
   assert.equal(extractOutputText({ output_text: "direct" }), "direct");
   assert.equal(

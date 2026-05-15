@@ -68,7 +68,7 @@ request "responses" "200" \
     "input": "Say that Responses passed."
   }'
 
-request "streaming-rejected" "501" \
+request "responses-stream" "200" \
   "${BASE_URL}/v1/responses" \
   -H "Authorization: Bearer ${PROXY_API_KEY}" \
   -H "Content-Type: application/json" \
@@ -76,6 +76,18 @@ request "streaming-rejected" "501" \
     "model": "gpt-5.5",
     "stream": true,
     "input": "Say ok."
+  }'
+
+request "chat-completions-stream" "200" \
+  "${BASE_URL}/v1/chat/completions" \
+  -H "Authorization: Bearer ${PROXY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "stream": true,
+    "messages": [
+      { "role": "user", "content": "Say ok." }
+    ]
   }'
 
 echo "smoke test passed"

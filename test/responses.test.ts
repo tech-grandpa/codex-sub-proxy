@@ -54,7 +54,39 @@ test("CodexResponsesForwarder adapts non-streaming requests to upstream SSE resp
   assert.equal((requests[0]?.init?.headers as Record<string, string>).Accept, "text/event-stream");
 
   const body = JSON.parse(String(requests[0]?.init?.body));
+  assert.equal(body.instructions, "");
   assert.deepEqual(body.input, [{ role: "user", content: "hello" }]);
   assert.equal(body.store, false);
   assert.equal(body.stream, true);
+});
+
+test("CodexResponsesForwarder exposes upstream SSE for streaming callers", async () => {
+  const tokenManager = new TokenManager(loadConfig({
+    OPENAI_ACCESS_TOKEN: "access-token",
+    OPENAI_EXPIRES_AT: "9999999999",
+    CODEX_RESPONSES_PATH: "/responses"
+  }));
+
+  const mockFetch: typeof fetch = async () => new Response("event: response.output_text.delta\ndata: {}\n\n", {
+    status: 200
+  });
+
+  const forwarder = new CodexResponsesForwarder(
+    loadConfig({
+      OPENAI_ACCESS_TOKEN: "access-token",
+      OPENAI_EXPIRES_AT: "9999999999",
+      CODEX_RESPONSES_PATH: "/responses"
+    }),
+    tokenManager,
+    mockFetch
+  );
+
+  const response = await forwarder.stream({
+    model: "gpt-5.5",
+    input: [{ role: "user", content: [{ type: "input_file", file_id: "file_123" }] }],
+    stream: true
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "event: response.output_text.delta\ndata: {}\n\n");
 });

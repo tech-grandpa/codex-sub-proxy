@@ -24,7 +24,14 @@ export interface ResponsesPayload {
 
 export interface ResponseInputMessage {
   role: "user" | "assistant";
-  content: string;
+  content: ResponseInputContent;
+}
+
+export type ResponseInputContent = string | ResponseContentPart[];
+
+export interface ResponseContentPart {
+  type: string;
+  [key: string]: unknown;
 }
 
 export function chatToResponsesPayload(request: ChatCompletionRequest): ResponsesPayload {
@@ -40,14 +47,15 @@ export function chatToResponsesPayload(request: ChatCompletionRequest): Response
 
   for (const rawMessage of request.messages) {
     const message = parseChatMessage(rawMessage);
-    const content = normalizeContent(message.content);
 
     if (message.role === "system" || message.role === "developer") {
+      const content = normalizeInstructionContent(message.content);
       if (content) instructions.push(content);
       continue;
     }
 
     if (message.role === "user" || message.role === "assistant") {
+      const content = normalizeContent(message.content);
       input.push({ role: message.role, content });
       continue;
     }
@@ -142,23 +150,62 @@ function parseChatMessage(value: unknown): ChatMessage {
   };
 }
 
-function normalizeContent(content: unknown): string {
+function normalizeContent(content: unknown): ResponseInputContent {
   if (content == null) return "";
   if (typeof content === "string") return content;
 
   if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (!part || typeof part !== "object") return "";
-        const object = part as Record<string, unknown>;
-        if (typeof object.text === "string") return object.text;
-        if (typeof object.content === "string") return object.content;
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
+    const parts = content
+      .map(normalizeContentPart)
+      .filter((part): part is ResponseContentPart => part !== undefined);
+
+    if (parts.every((part) => part.type === "input_text")) {
+      return parts
+        .map((part) => typeof part.text === "string" ? part.text : "")
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    return parts;
   }
 
   return String(content);
+}
+
+function normalizeInstructionContent(content: unknown): string {
+  const normalized = normalizeContent(content);
+  if (typeof normalized === "string") return normalized;
+  return normalized
+    .map((part) => typeof part.text === "string" ? part.text : "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function normalizeContentPart(part: unknown): ResponseContentPart | undefined {
+  if (typeof part === "string") {
+    return { type: "input_text", text: part };
+  }
+  if (!part || typeof part !== "object") return undefined;
+
+  const object = part as Record<string, unknown>;
+  if (object.type === "input_text" || object.type === "input_file" || object.type === "input_image") {
+    return { ...object, type: object.type };
+  }
+
+  if (object.type === "text" && typeof object.text === "string") {
+    return { type: "input_text", text: object.text };
+  }
+
+  if (object.type === "file" && object.file && typeof object.file === "object" && !Array.isArray(object.file)) {
+    return { type: "input_file", ...(object.file as Record<string, unknown>) };
+  }
+
+  if (typeof object.text === "string") {
+    return { type: "input_text", text: object.text };
+  }
+  if (typeof object.content === "string") {
+    return { type: "input_text", text: object.content };
+  }
+
+  return undefined;
 }

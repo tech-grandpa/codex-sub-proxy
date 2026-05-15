@@ -21,17 +21,20 @@ This is not a transparent full OpenAI API proxy. It implements a small compatibi
 
 - `/v1/chat/completions` converts chat messages into a Responses-style upstream request.
 - `/v1/responses` accepts string `input` and normalizes it into the list shape currently required by the private Codex backend.
-- Caller streaming is not implemented. Requests with `stream: true` return `501`.
-- Internally, the proxy uses the upstream-required SSE transport, then collapses the result back into non-streaming JSON.
+- `/v1/responses` with `stream: true` relays upstream Responses SSE events.
+- `/v1/chat/completions` with `stream: true` translates upstream Responses SSE into OpenAI-style `chat.completion.chunk` events.
+- Non-streaming callers still receive regular JSON because the proxy collapses upstream SSE internally.
+- Structured Responses content parts are preserved, including `input_file` parts.
+- Chat-style `{ "type": "file", "file": { ... } }` content parts are mapped to Responses `input_file` parts.
 - `/v1/models` returns the configured local model list, not a live upstream model catalog.
 
 Not supported:
 
 - Transparent pass-through of every OpenAI field
-- Caller-facing streaming
 - Tools/function calling compatibility
-- Files, embeddings, images, audio, Assistants, or batch APIs
-- Full multimodal chat content preservation
+- `/v1/files` upload/list/delete endpoints
+- Embeddings, images, audio, Assistants, or batch APIs
+- Full multimodal chat compatibility beyond text and file content parts
 
 ## Quick Start
 
@@ -153,7 +156,9 @@ Current private-backend requirements handled by the proxy:
 - Forces upstream `store: false`
 - Forces upstream `stream: true`
 - Sends `Accept: text/event-stream`
-- Parses upstream SSE events into a completed JSON response
+- Relays upstream SSE for `/v1/responses` streaming callers
+- Translates upstream SSE into chat completion chunks for `/v1/chat/completions` streaming callers
+- Parses upstream SSE events into completed JSON for non-streaming callers
 - Converts string Responses `input` into `[{ "role": "user", "content": "..." }]`
 - Strips known unsupported normal Responses parameters:
   - `max_output_tokens`
@@ -205,6 +210,58 @@ curl -s http://localhost:3000/v1/responses \
   }'
 ```
 
+Streaming Responses:
+
+```sh
+curl -N http://localhost:3000/v1/responses \
+  -H "Authorization: Bearer ${PROXY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "stream": true,
+    "input": "Say the proxy works."
+  }'
+```
+
+Streaming chat completions:
+
+```sh
+curl -N http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer ${PROXY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "stream": true,
+    "messages": [
+      { "role": "user", "content": "Say the proxy works." }
+    ]
+  }'
+```
+
+Inline file content:
+
+```sh
+curl -s http://localhost:3000/v1/responses \
+  -H "Authorization: Bearer ${PROXY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "input_text", "text": "Summarize this file." },
+          {
+            "type": "input_file",
+            "filename": "notes.txt",
+            "file_data": "data:text/plain;base64,aGVsbG8="
+          }
+        ]
+      }
+    ]
+  }'
+```
+
 ## Smoke Test
 
 After starting the service, run:
@@ -220,7 +277,8 @@ The script reads `.env` by default and checks:
 - authenticated `/v1/models`
 - live `/v1/chat/completions`
 - live `/v1/responses`
-- caller-facing streaming rejection
+- live `/v1/chat/completions` streaming
+- live `/v1/responses` streaming
 
 Use a different base URL or env file:
 
@@ -239,7 +297,19 @@ OPENAI_API_KEY=${PROXY_API_KEY}
 OPENAI_MODEL=gpt-5.5
 ```
 
-Use `/v1/chat/completions` for clients that still send chat messages. The proxy converts `system` and `developer` messages into `instructions`, converts `user` and `assistant` messages into Responses `input` items, forwards to Codex Responses, and returns a non-streaming `chat.completion` response.
+Use `/v1/chat/completions` for clients that still send chat messages. The proxy converts `system` and `developer` messages into `instructions`, converts `user` and `assistant` messages into Responses `input` items, forwards to Codex Responses, and returns either a non-streaming `chat.completion` response or streaming `chat.completion.chunk` events.
+
+## Files
+
+The proxy does not implement OpenAI's `/v1/files` upload/list/delete API. Those routes return a clear `501` response. There is no confirmed stable private Codex file-upload route in this project.
+
+What does work is passing file content through model requests when the backend accepts it:
+
+- `/v1/responses` preserves `input_file` content parts.
+- `/v1/chat/completions` maps chat content parts shaped like `{ "type": "file", "file": { ... } }` into Responses `input_file` parts.
+- Text-only chat content arrays remain text for broad compatibility.
+
+Use inline `file_data` data URLs or upstream-supported file identifiers if your account/backend accepts them.
 
 ## Troubleshooting
 
@@ -255,11 +325,6 @@ Use `/v1/chat/completions` for clients that still send chat messages. The proxy 
 - Confirm `CODEX_RESPONSES_PATH=/responses`.
 - Confirm the account has Codex access.
 - Check whether ChatGPT changed the private backend route or request contract.
-
-`501 not_implemented`:
-
-- The caller sent `stream: true`.
-- Caller-facing streaming is intentionally unsupported right now.
 
 Docker cannot bind port `3000`:
 
@@ -278,8 +343,6 @@ npm start
 
 The test suite uses Node's built-in test runner and does not call the real ChatGPT backend.
 
-See [AGENDA.md](./AGENDA.md) for the current project analysis, risks, and suggested next work.
-
 ## Security Notes
 
 - Never commit `.env` or real OAuth credentials.
@@ -290,4 +353,4 @@ See [AGENDA.md](./AGENDA.md) for the current project analysis, risks, and sugges
 
 ## License
 
-MIT
+Apache-2.0

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
   "description": "Small-footprint OpenAI-compatible proxy for ChatGPT/Codex subscription-backed models.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
