@@ -2,11 +2,43 @@
 
 Small-footprint OpenAI-compatible HTTP proxy for internal tools that need to call ChatGPT/Codex subscription-backed GPT models through the private ChatGPT Codex backend.
 
+## Table Of Contents
+
+- [Marketing Section](#marketing-section)
+- [Important Warning](#important-warning)
+- [What It Supports](#what-it-supports)
+- [Docker Quick Start](#docker-quick-start)
+- [Docker Images](#docker-images)
+- [Configuration](#configuration)
+- [Authentication](#authentication)
+- [Curl Examples](#curl-examples)
+- [Files](#files)
+- [Smoke Test](#smoke-test)
+- [Client Configuration](#client-configuration)
+- [Developer Workflow](#developer-workflow)
+- [CI And Publishing](#ci-and-publishing)
+- [Troubleshooting](#troubleshooting)
+- [Security Notes](#security-notes)
+- [License](#license)
+
+## Marketing Section
+
+`codex-sub-proxy` is useful when you already have ChatGPT/Codex subscription access and want a small OpenAI-compatible HTTP surface for trusted internal tools.
+
+Common use cases:
+
+- Connect LiteLLM-like clients or transcription analyzers to subscription-backed Codex models.
+- Run a private sidecar service that exposes `/v1/chat/completions` or `/v1/responses` to older internal clients.
+- Give local automation, batch analysis scripts, or internal dashboards one stable base URL while the private Codex backend shape changes.
+- Test Codex-backed workflows without deploying a larger gateway.
+
+The project aims to be tiny, auditable, Docker-friendly, and explicit about its limits.
+
 ## Important Warning
 
 This project uses unofficial/private ChatGPT/Codex backend behavior. It may violate provider terms, may stop working without notice, and should be used only where you have reviewed the legal, security, and operational risk.
 
-Do not expose this service directly to the public internet. Put it behind a private network boundary and always set `PROXY_API_KEY` outside local development.
+Do not expose this service directly to the public internet. Put it behind a private network boundary and always set `PROXY_API_KEY` outside isolated local development.
 
 ## What It Supports
 
@@ -36,22 +68,22 @@ Not supported:
 - Embeddings, images, audio, Assistants, or batch APIs
 - Full multimodal chat compatibility beyond text and file content parts
 
-## Quick Start
+## Docker Quick Start
 
-Install dependencies and build:
-
-```sh
-npm install
-npm run build
-```
-
-Get ChatGPT/Codex OAuth credentials:
+Create an env file:
 
 ```sh
-npm run login
+cp .env.example .env
 ```
 
-The login command prints a URL and device code to stderr. Open the URL, authorize the device code, and the command writes JSON credentials to stdout:
+Generate ChatGPT/Codex OAuth credentials with the Docker image:
+
+```sh
+docker run --rm ghcr.io/tech-grandpa/codex-sub-proxy:latest \
+  node dist/src/cli/login.js
+```
+
+The command prints a device URL and code to stderr. Open the URL, authorize the code, and the command writes JSON credentials to stdout:
 
 ```json
 {
@@ -61,13 +93,7 @@ The login command prints a URL and device code to stderr. Open the URL, authoriz
 }
 ```
 
-Create `.env`:
-
-```sh
-cp .env.example .env
-```
-
-Fill in at least:
+Put those values into `.env`:
 
 ```sh
 PROXY_API_KEY=choose-a-long-random-local-key
@@ -76,48 +102,58 @@ OPENAI_ACCESS_TOKEN=...
 OPENAI_EXPIRES_AT=...
 ```
 
-Run locally:
+Run the published image:
 
 ```sh
-set -a
-. ./.env
-set +a
-npm start
-```
-
-The proxy listens on `http://0.0.0.0:3000` by default.
-
-## Docker
-
-Build and run:
-
-```sh
-docker build -t codex-sub-proxy:local .
 docker run --rm \
-  --name codex-sub-proxy-local \
+  --name codex-sub-proxy \
   -p 3000:3000 \
   --env-file .env \
-  codex-sub-proxy:local
+  ghcr.io/tech-grandpa/codex-sub-proxy:latest
 ```
 
-Docker Compose:
+Or use Docker Compose:
 
 ```sh
-docker compose up --build
+cp .env.example .env
+docker compose up
 ```
 
-Stop the named Docker container:
+To point Compose at a different env file:
 
 ```sh
-docker rm -f codex-sub-proxy-local
+ENV_FILE=/path/to/proxy.env docker compose up
 ```
+
+Stop the named container:
+
+```sh
+docker rm -f codex-sub-proxy
+```
+
+## Docker Images
+
+Images are published to GitHub Container Registry:
+
+```text
+ghcr.io/tech-grandpa/codex-sub-proxy
+```
+
+Useful tags:
+
+- `latest`: current default branch image
+- `main`: current `main` branch image
+- `sha-<commit>`: immutable commit image
+- `<git-tag>`: release tag image, for example `v0.1.0`
+
+If a newly published GHCR package is private, make the package public in the repository/package settings before asking regular users to pull it.
 
 ## Configuration
 
 | Variable | Default | Required | Notes |
 | --- | --- | --- | --- |
-| `HOST` | `0.0.0.0` | No | Bind address. |
-| `PORT` | `3000` | No | HTTP port. |
+| `HOST` | `0.0.0.0` | No | Bind address inside the container. |
+| `PORT` | `3000` | No | HTTP port inside the container. |
 | `PROXY_API_KEY` | unset | Strongly recommended | Caller bearer token. If unset, all routes except `/healthz` are unauthenticated. |
 | `OPENAI_REFRESH_TOKEN` | unset | Yes | ChatGPT OAuth refresh token. |
 | `OPENAI_ACCESS_TOKEN` | unset | No | Optional initial access token. If absent or expiring, the proxy refreshes from `OPENAI_REFRESH_TOKEN`. |
@@ -136,36 +172,6 @@ Authorization: Bearer ${PROXY_API_KEY}
 ```
 
 Leaving `PROXY_API_KEY` unset disables caller authentication. That mode is only appropriate for isolated local development.
-
-## Upstream Behavior
-
-The proxy forwards model calls to:
-
-```text
-${CODEX_BASE_URL}${CODEX_RESPONSES_PATH}
-```
-
-Default:
-
-```text
-https://chatgpt.com/backend-api/codex/responses
-```
-
-Current private-backend requirements handled by the proxy:
-
-- Forces upstream `store: false`
-- Forces upstream `stream: true`
-- Sends `Accept: text/event-stream`
-- Relays upstream SSE for `/v1/responses` streaming callers
-- Translates upstream SSE into chat completion chunks for `/v1/chat/completions` streaming callers
-- Parses upstream SSE events into completed JSON for non-streaming callers
-- Converts string Responses `input` into `[{ "role": "user", "content": "..." }]`
-- Strips known unsupported normal Responses parameters:
-  - `max_output_tokens`
-  - `metadata`
-  - `prompt_cache_retention`
-  - `service_tier`
-  - `temperature`
 
 ## Curl Examples
 
@@ -238,7 +244,17 @@ curl -N http://localhost:3000/v1/chat/completions \
   }'
 ```
 
-Inline file content:
+## Files
+
+The proxy does not implement OpenAI's `/v1/files` upload/list/delete API. Those routes return a clear `501` response. There is no confirmed stable private Codex file-upload route in this project.
+
+What does work is passing file content through model requests when the backend accepts it:
+
+- `/v1/responses` preserves `input_file` content parts.
+- `/v1/chat/completions` maps chat content parts shaped like `{ "type": "file", "file": { ... } }` into Responses `input_file` parts.
+- Text-only chat content arrays remain text for broad compatibility.
+
+Inline file example:
 
 ```sh
 curl -s http://localhost:3000/v1/responses \
@@ -262,15 +278,17 @@ curl -s http://localhost:3000/v1/responses \
   }'
 ```
 
+Use inline `file_data` data URLs or upstream-supported file identifiers if your account/backend accepts them.
+
 ## Smoke Test
 
 After starting the service, run:
 
 ```sh
-./scripts/smoke-test.sh
+ENV_FILE=.env ./scripts/smoke-test.sh
 ```
 
-The script reads `.env` by default and checks:
+The script checks:
 
 - `/healthz`
 - unauthenticated `/v1/models` rejection
@@ -280,7 +298,7 @@ The script reads `.env` by default and checks:
 - live `/v1/chat/completions` streaming
 - live `/v1/responses` streaming
 
-Use a different base URL or env file:
+Use a different base URL:
 
 ```sh
 BASE_URL=http://localhost:3000 ENV_FILE=.env ./scripts/smoke-test.sh
@@ -299,17 +317,60 @@ OPENAI_MODEL=gpt-5.5
 
 Use `/v1/chat/completions` for clients that still send chat messages. The proxy converts `system` and `developer` messages into `instructions`, converts `user` and `assistant` messages into Responses `input` items, forwards to Codex Responses, and returns either a non-streaming `chat.completion` response or streaming `chat.completion.chunk` events.
 
-## Files
+## Developer Workflow
 
-The proxy does not implement OpenAI's `/v1/files` upload/list/delete API. Those routes return a clear `501` response. There is no confirmed stable private Codex file-upload route in this project.
+Use the npm workflow when you are changing the project:
 
-What does work is passing file content through model requests when the backend accepts it:
+```sh
+npm install
+npm test
+npm run typecheck
+npm run build
+npm start
+```
 
-- `/v1/responses` preserves `input_file` content parts.
-- `/v1/chat/completions` maps chat content parts shaped like `{ "type": "file", "file": { ... } }` into Responses `input_file` parts.
-- Text-only chat content arrays remain text for broad compatibility.
+Run the login helper without Docker:
 
-Use inline `file_data` data URLs or upstream-supported file identifiers if your account/backend accepts them.
+```sh
+npm run build
+npm run login
+```
+
+Build a local development image:
+
+```sh
+docker build -t codex-sub-proxy:local .
+docker run --rm \
+  --name codex-sub-proxy-local \
+  -p 3000:3000 \
+  --env-file .env \
+  codex-sub-proxy:local
+```
+
+The unit test suite uses Node's built-in test runner and does not call the real ChatGPT backend. The smoke script does call the live backend.
+
+## CI And Publishing
+
+GitHub Actions are defined in `.github/workflows/ci.yml`.
+
+On every push and pull request:
+
+- Install Node.js 22 dependencies with `npm ci`
+- Run `npm test`
+
+On every push:
+
+- Build the Docker image
+- Push it to GitHub Container Registry
+- Publish branch, SHA, and tag-based image tags
+
+When you push a Git tag such as `v0.1.0`, the workflow publishes:
+
+```text
+ghcr.io/tech-grandpa/codex-sub-proxy:v0.1.0
+```
+
+The default branch also publishes `latest`.
 
 ## Troubleshooting
 
@@ -321,7 +382,7 @@ Use inline `file_data` data URLs or upstream-supported file identifiers if your 
 `502 upstream_error`:
 
 - The private ChatGPT/Codex backend rejected the request.
-- Re-run `npm run login` if credentials may be expired.
+- Re-run the login helper if credentials may be expired.
 - Confirm `CODEX_RESPONSES_PATH=/responses`.
 - Confirm the account has Codex access.
 - Check whether ChatGPT changed the private backend route or request contract.
@@ -330,18 +391,6 @@ Docker cannot bind port `3000`:
 
 - Another process is already listening on that port.
 - Stop it or map a different host port, for example `-p 3001:3000`.
-
-## Development
-
-```sh
-npm install
-npm test
-npm run typecheck
-npm run build
-npm start
-```
-
-The test suite uses Node's built-in test runner and does not call the real ChatGPT backend.
 
 ## Security Notes
 

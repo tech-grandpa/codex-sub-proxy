@@ -1,11 +1,10 @@
 services:
   codex-sub-proxy:
-    build: .
-    image: codex-sub-proxy:local
+    image: ghcr.io/tech-grandpa/codex-sub-proxy:latest
     ports:
       - "${PORT:-3000}:3000"
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       PORT: 3000
       HOST: 0.0.0.0
