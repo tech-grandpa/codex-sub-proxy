@@ -26,6 +26,7 @@ It is designed to be easy to run as a Docker sidecar, easy to audit, and honest 
 - [Smoke Test](#smoke-test)
 - [Client Configuration](#client-configuration)
 - [Development](#development)
+- [Contributing](#contributing)
 - [CI And Publishing](#ci-and-publishing)
 - [Troubleshooting](#troubleshooting)
 - [Security](#security)
@@ -380,6 +381,20 @@ docker run --rm \
 
 The unit tests use Node's built-in test runner and do not call the real ChatGPT backend.
 
+## Contributing
+
+All changes go through short-lived feature branches and pull requests targeting `main`. Pull requests are squash-merged, so the PR title is the commit title that lands on `main`.
+
+Use Conventional Commit PR titles:
+
+```text
+feat: add streaming option
+fix: handle expired token refresh
+docs: clarify Docker setup
+```
+
+The PR title is also the release signal used by release automation: `fix:` means patch, `feat:` means minor, and `!` or `BREAKING CHANGE:` means major. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow.
+
 ## CI And Publishing
 
 GitHub Actions are defined in:
@@ -387,27 +402,39 @@ GitHub Actions are defined in:
 - [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)
 - [`.github/workflows/codeql.yml`](./.github/workflows/codeql.yml)
 - [`.github/workflows/dependency-review.yml`](./.github/workflows/dependency-review.yml)
+- [`.github/workflows/pr-title.yml`](./.github/workflows/pr-title.yml)
+- [`.github/workflows/release-from-tag.yml`](./.github/workflows/release-from-tag.yml)
+- [`.github/workflows/release-please.yml`](./.github/workflows/release-please.yml)
 - [`.github/workflows/security.yml`](./.github/workflows/security.yml)
 
 On every push and pull request:
 
-- install Node.js 22 dependencies with `npm ci`
-- run `npm test`
+- verify whether the change is documentation-only
+- install Node.js 22 dependencies with `npm ci` when code paths changed
+- run `npm test` when code paths changed
+- build the Docker image without pushing it when code paths changed
 
 On pushes to `main` and pull requests targeting `main`:
 
 - run CodeQL static analysis
 - run dependency and container vulnerability checks
 
-On pushes:
+On pushes to `main`:
 
 - build the Docker image
 - push it to GitHub Container Registry
-- publish branch, SHA, and tag-based image tags
+- publish `main`, `latest`, and `sha-<commit>` image tags
+
+On feature-branch pushes:
+
+- run verification
+- do not publish persistent Docker images
 
 On pull requests:
 
+- validate the PR title against Conventional Commits
 - Dependency Review blocks newly introduced vulnerable dependencies at moderate severity or higher.
+- Docker builds run with `push: false`.
 
 On a weekly schedule:
 
@@ -422,7 +449,7 @@ Version tags are published as matching image tags. For example, `v0.1.0` is publ
 ghcr.io/tech-grandpa/codex-sub-proxy:v0.1.0
 ```
 
-The default branch also publishes `latest`.
+Tags matching `v*` also create a GitHub Release with generated release notes. Release PRs are managed by release-please from Conventional Commit history.
 
 ## Troubleshooting
 
