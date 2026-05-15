@@ -17,6 +17,17 @@ Please report security-sensitive issues privately to the repository owner instea
 - Put the service behind private networking, firewall rules, or a trusted reverse proxy.
 - Avoid logging request bodies, model outputs, OAuth tokens, or caller API keys.
 
+## Automated Checks
+
+The repository uses GitHub-native checks for routine maintenance and security visibility:
+
+- Dependabot checks npm, Docker, and GitHub Actions updates weekly.
+- Dependency Review blocks pull requests that introduce vulnerable dependencies at moderate severity or higher.
+- CodeQL runs on pushes, pull requests, and a weekly schedule.
+- The Security workflow runs `npm audit` and Trivy filesystem/image scans, then uploads SARIF results to GitHub code scanning.
+
+For public repository hosting, enable Dependabot alerts and Dependabot security updates in GitHub repository settings so advisory-backed fixes are opened automatically.
+
 ## Known Risk
 
 This proxy depends on unofficial/private ChatGPT/Codex backend behavior. That backend can change without notice, and its use may have legal, provider-terms, operational, or security implications. Review those risks before deploying.

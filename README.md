@@ -3,6 +3,8 @@
 Run a tiny OpenAI-compatible proxy for ChatGPT/Codex subscription-backed models.
 
 [![CI](https://github.com/tech-grandpa/codex-sub-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-grandpa/codex-sub-proxy/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tech-grandpa/codex-sub-proxy/actions/workflows/codeql.yml/badge.svg)](https://github.com/tech-grandpa/codex-sub-proxy/actions/workflows/codeql.yml)
+[![Security](https://github.com/tech-grandpa/codex-sub-proxy/actions/workflows/security.yml/badge.svg)](https://github.com/tech-grandpa/codex-sub-proxy/actions/workflows/security.yml)
 [![Container](https://img.shields.io/badge/container-ghcr.io%2Ftech--grandpa%2Fcodex--sub--proxy-blue)](https://github.com/tech-grandpa/codex-sub-proxy/pkgs/container/codex-sub-proxy)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](./LICENSE)
 
@@ -382,18 +384,39 @@ The unit tests use Node's built-in test runner and do not call the real ChatGPT 
 
 ## CI And Publishing
 
-GitHub Actions are defined in [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+GitHub Actions are defined in:
+
+- [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)
+- [`.github/workflows/codeql.yml`](./.github/workflows/codeql.yml)
+- [`.github/workflows/dependency-review.yml`](./.github/workflows/dependency-review.yml)
+- [`.github/workflows/security.yml`](./.github/workflows/security.yml)
 
 On every push and pull request:
 
 - install Node.js 22 dependencies with `npm ci`
 - run `npm test`
 
+On pushes to `main` and pull requests targeting `main`:
+
+- run CodeQL static analysis
+- run dependency and container vulnerability checks
+
 On every push:
 
 - build the Docker image
 - push it to GitHub Container Registry
 - publish branch, SHA, and tag-based image tags
+
+On pull requests:
+
+- Dependency Review blocks newly introduced vulnerable dependencies at moderate severity or higher.
+
+On a weekly schedule:
+
+- Dependabot checks npm, Docker, and GitHub Actions updates.
+- CodeQL re-runs static analysis.
+- `npm audit` checks dependency advisories.
+- Trivy scans the repository filesystem and Docker image, then uploads SARIF results to GitHub code scanning.
 
 When you push a Git tag such as `v0.1.0`, the workflow publishes:
 
@@ -434,6 +457,7 @@ GHCR image pull fails
 - Keep this service on private networks.
 - Set `PROXY_API_KEY` for every non-local deployment.
 - Avoid logging prompts, completions, API keys, or OAuth tokens.
+- Review Dependabot, CodeQL, Dependency Review, and Trivy findings in GitHub before each release.
 
 ## License
 
