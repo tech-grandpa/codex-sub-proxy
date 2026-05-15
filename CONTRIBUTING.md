@@ -66,5 +66,6 @@ Releases use release-please and Conventional Commits.
 
 After releasable commits land on `main`, release-please opens or updates a release PR. Merging that PR updates package metadata and changelog content, creates the next semver tag, creates a GitHub Release, and publishes the matching Docker image tag.
 
-Manual tags matching `v*` are also treated as releases. A tag push creates GitHub release notes from the commits since the previous release and publishes the matching Docker image tag.
+For protected branches, release-please should use a `RELEASE_PLEASE_TOKEN` repository secret from a fine-grained personal access token or GitHub App token that can create pull requests. That lets CI run on release PRs. Without that secret, the workflow falls back to `GITHUB_TOKEN`, which can prepare releases but may not trigger follow-up workflows for bot-created PRs.
 
+Manual tags matching `v*` are also treated as releases. A tag push creates GitHub release notes from the commits since the previous release and publishes the matching Docker image tag.

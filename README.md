@@ -451,6 +451,8 @@ ghcr.io/tech-grandpa/codex-sub-proxy:v0.1.0
 
 Tags matching `v*` also create a GitHub Release with generated release notes. Release PRs are managed by release-please from Conventional Commit history.
 
+For protected branches, release-please works best with a `RELEASE_PLEASE_TOKEN` repository secret so release PRs trigger the same required checks as human-authored PRs.
+
 ## Troubleshooting
 
 `401 Unauthorized`
