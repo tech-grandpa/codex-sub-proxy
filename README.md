@@ -141,8 +141,6 @@ Tags:
 | `sha-<commit>` | Immutable commit image |
 | `<git-tag>` | Release tag image, for example `v0.1.0` |
 
-If a newly published GHCR package is private, make the package public in the repository/package settings before asking regular users to pull it.
-
 Stop a named local container:
 
 ```sh
@@ -401,7 +399,7 @@ On pushes to `main` and pull requests targeting `main`:
 - run CodeQL static analysis
 - run dependency and container vulnerability checks
 
-On every push:
+On pushes:
 
 - build the Docker image
 - push it to GitHub Container Registry
@@ -418,7 +416,7 @@ On a weekly schedule:
 - `npm audit` checks dependency advisories.
 - Trivy scans the repository filesystem and Docker image, then uploads SARIF results to GitHub code scanning.
 
-When you push a Git tag such as `v0.1.0`, the workflow publishes:
+Version tags are published as matching image tags. For example, `v0.1.0` is published as:
 
 ```text
 ghcr.io/tech-grandpa/codex-sub-proxy:v0.1.0
@@ -445,11 +443,6 @@ Docker cannot bind port `3000`
 - Another process is already listening on that port.
 - Stop it or map a different host port, for example `-p 3001:3000`.
 
-GHCR image pull fails
-
-- The package may still be private.
-- Make the GHCR package public in the repository/package settings.
-
 ## Security
 
 - Never commit `.env` or real OAuth credentials.
@@ -457,7 +450,6 @@ GHCR image pull fails
 - Keep this service on private networks.
 - Set `PROXY_API_KEY` for every non-local deployment.
 - Avoid logging prompts, completions, API keys, or OAuth tokens.
-- Review Dependabot, CodeQL, Dependency Review, and Trivy findings in GitHub before each release.
 
 ## License
 
