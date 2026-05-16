@@ -85,6 +85,63 @@ test("POST /v1/chat/completions translates upstream SSE into chat chunks", async
   });
 });
 
+test("POST /v1/chat/completions maps web_search_options before forwarding", async () => {
+  let forwardedPayload: Record<string, unknown> | undefined;
+  const forwarder: ResponsesForwarder = {
+    async forward(payload) {
+      forwardedPayload = payload;
+      return { output_text: "ok" };
+    },
+    async stream() {
+      throw new Error("unexpected stream");
+    }
+  };
+
+  await withServer(forwarder, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        web_search_options: {
+          search_context_size: "low",
+          user_location: {
+            type: "approximate",
+            approximate: {
+              country: "GB",
+              city: "London",
+              region: "London",
+              timezone: "Europe/London"
+            }
+          }
+        },
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.deepEqual(forwardedPayload?.tools, [
+    {
+      type: "web_search",
+      search_context_size: "low",
+      user_location: {
+        type: "approximate",
+        country: "GB",
+        city: "London",
+        region: "London",
+        timezone: "Europe/London"
+      }
+    }
+  ]);
+  assert.equal(forwardedPayload?.tool_choice, "auto");
+  assert.equal(forwardedPayload?.web_search_options, undefined);
+});
+
 test("file upload endpoints report an explicit unsupported response", async () => {
   const forwarder: ResponsesForwarder = {
     async forward() {

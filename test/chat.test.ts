@@ -50,6 +50,33 @@ test("chatToResponsesPayload preserves structured file content", () => {
   ]);
 });
 
+test("chatToResponsesPayload maps web_search_options to a Responses web_search tool", () => {
+  const payload = chatToResponsesPayload({
+    model: "gpt-5.5",
+    web_search_options: {},
+    messages: [{ role: "user", content: "Find current news." }]
+  });
+
+  assert.deepEqual(payload.tools, [{ type: "web_search" }]);
+  assert.equal(payload.tool_choice, "auto");
+  assert.equal(payload.web_search_options, undefined);
+});
+
+test("chatToResponsesPayload preserves explicit tools when web_search_options is also present", () => {
+  const tools = [{ type: "web_search", search_context_size: "low" }];
+  const payload = chatToResponsesPayload({
+    model: "gpt-5.5",
+    tools,
+    tool_choice: "required",
+    web_search_options: {},
+    messages: [{ role: "user", content: "Find current news." }]
+  });
+
+  assert.deepEqual(payload.tools, tools);
+  assert.equal(payload.tool_choice, "required");
+  assert.equal(payload.web_search_options, undefined);
+});
+
 test("extractOutputText supports output_text and Responses output arrays", () => {
   assert.equal(extractOutputText({ output_text: "direct" }), "direct");
   assert.equal(

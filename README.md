@@ -22,6 +22,7 @@ It is designed to be easy to run as a Docker sidecar, easy to audit, and honest 
 - [How It Works](#how-it-works)
 - [Configuration](#configuration)
 - [Examples](#examples)
+- [Web Search](#web-search)
 - [Files](#files)
 - [Smoke Test](#smoke-test)
 - [Client Configuration](#client-configuration)
@@ -42,6 +43,7 @@ Good fits:
 - Keep older tools that know `/v1/chat/completions` working while using Codex-backed Responses upstream.
 - Run a small Docker sidecar instead of deploying a larger gateway.
 - Support both streaming and non-streaming clients.
+- Expose Codex-backed hosted web search to trusted clients.
 - Pass inline file content to Codex model requests without adding a separate storage service.
 
 Poor fits:
@@ -154,8 +156,8 @@ docker rm -f codex-sub-proxy
 | --- | --- | --- |
 | `GET /healthz` | Supported | Health check |
 | `GET /v1/models` | Supported | Returns the configured local model list |
-| `POST /v1/responses` | Supported | Streaming and non-streaming |
-| `POST /v1/chat/completions` | Supported | Streaming and non-streaming chat compatibility |
+| `POST /v1/responses` | Supported | Streaming, non-streaming, and hosted `web_search` tools |
+| `POST /v1/chat/completions` | Supported | Streaming, non-streaming, and `web_search_options` compatibility |
 | `/v1/files` | Not supported | Returns `501`; use inline `input_file` parts |
 | Embeddings, audio, images, batches, Assistants | Not supported | Outside this proxy's scope |
 
@@ -178,6 +180,7 @@ The proxy:
 - refreshes ChatGPT OAuth access tokens with `OPENAI_REFRESH_TOKEN`
 - authenticates callers with `PROXY_API_KEY`
 - converts chat-completion requests into Responses payloads
+- maps Chat Completions `web_search_options` to a Responses `web_search` tool
 - relays Responses SSE for streaming `/v1/responses`
 - translates upstream SSE into `chat.completion.chunk` events for streaming chat clients
 - collapses upstream SSE into JSON for non-streaming clients
@@ -281,6 +284,46 @@ curl -N http://localhost:3000/v1/responses \
     "input": "Say the proxy works."
   }'
 ```
+
+## Web Search
+
+Web search is a hosted upstream tool. The proxy does not search the web itself; it forwards the tool request to the private Codex Responses backend and relays the resulting response or SSE events.
+
+Use Responses-style tools when your client supports `/v1/responses`:
+
+```sh
+curl -s http://localhost:3000/v1/responses \
+  -H "Authorization: Bearer ${PROXY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "tools": [{ "type": "web_search" }],
+    "tool_choice": "auto",
+    "input": "Search the web for one current OpenAI headline and return the URL."
+  }'
+```
+
+Chat-compatible clients can use `web_search_options`. The proxy converts this into a Responses `web_search` tool before forwarding the request:
+
+```sh
+curl -s http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer ${PROXY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "web_search_options": {
+      "search_context_size": "medium"
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Search the web for one current OpenAI headline and return the URL."
+      }
+    ]
+  }'
+```
+
+When both `tools` and `web_search_options` are present on a chat request, explicit `tools` win and `web_search_options` is removed before forwarding.
 
 ## Files
 
