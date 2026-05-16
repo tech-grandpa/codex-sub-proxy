@@ -11,6 +11,7 @@ export interface ChatCompletionRequest {
   model?: unknown;
   messages?: unknown;
   stream?: unknown;
+  web_search_options?: unknown;
   [key: string]: unknown;
 }
 
@@ -64,13 +65,66 @@ export function chatToResponsesPayload(request: ChatCompletionRequest): Response
   }
 
   const { messages: _messages, ...rest } = request;
-  return {
+  const payload = {
     ...rest,
     model: request.model,
     instructions: instructions.length > 0 ? instructions.join("\n\n") : undefined,
     input,
     stream: request.stream === true
   };
+
+  return applyChatWebSearchOptions(payload);
+}
+
+function applyChatWebSearchOptions(payload: ResponsesPayload): ResponsesPayload {
+  if (payload.web_search_options == null) return payload;
+
+  const { web_search_options: webSearchOptions, ...rest } = payload;
+  if (rest.tools !== undefined) return rest as ResponsesPayload;
+
+  const webSearchTool = chatWebSearchOptionsToResponsesTool(webSearchOptions);
+
+  return {
+    ...rest,
+    tools: [webSearchTool],
+    tool_choice: rest.tool_choice ?? "auto"
+  };
+}
+
+function chatWebSearchOptionsToResponsesTool(options: unknown): ResponseContentPart {
+  const tool: ResponseContentPart = { type: "web_search" };
+  if (!options || typeof options !== "object" || Array.isArray(options)) return tool;
+
+  const object = options as Record<string, unknown>;
+  if (typeof object.search_context_size === "string") {
+    tool.search_context_size = object.search_context_size;
+  }
+
+  const userLocation = normalizeWebSearchUserLocation(object.user_location);
+  if (userLocation) {
+    tool.user_location = userLocation;
+  }
+
+  return tool;
+}
+
+function normalizeWebSearchUserLocation(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const object = value as Record<string, unknown>;
+  const approximate = object.approximate;
+  if (object.type === "approximate" && approximate && typeof approximate === "object" && !Array.isArray(approximate)) {
+    return {
+      type: "approximate",
+      ...(approximate as Record<string, unknown>)
+    };
+  }
+
+  if (object.type === "approximate") {
+    return { ...object };
+  }
+
+  return undefined;
 }
 
 export function responsesToChatCompletion(response: unknown, model: string): Record<string, unknown> {
