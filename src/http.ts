@@ -22,9 +22,22 @@ export function sendJson(res: ServerResponse, response: JsonResponse): void {
   res.writeHead(response.status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(payload),
-    ...response.headers
+    ...response.headers,
   });
   res.end(payload);
+}
+
+export function sendText(
+  res: ServerResponse,
+  status: number,
+  body: string,
+  contentType = "text/plain; charset=utf-8",
+): void {
+  res.writeHead(status, {
+    "Content-Type": contentType,
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
 }
 
 export function errorResponse(error: unknown): JsonResponse {
@@ -34,21 +47,27 @@ export function errorResponse(error: unknown): JsonResponse {
       body: {
         error: {
           type: error.code,
-          message: error.message
-        }
-      }
+          message: error.message,
+        },
+      },
     };
   }
 
-  const message = error instanceof Error ? error.message : "Unknown error";
+  if (error instanceof DOMException && error.name === "TimeoutError") {
+    return {
+      status: 504,
+      body: { error: { type: "upstream_timeout", message: "Upstream request timed out" } },
+    };
+  }
+
   return {
     status: 500,
     body: {
       error: {
         type: "internal_error",
-        message
-      }
-    }
+        message: "Internal server error",
+      },
+    },
   };
 }
 
@@ -88,8 +107,8 @@ export function notImplemented(message: string): JsonResponse {
     body: {
       error: {
         type: "not_implemented",
-        message
-      }
-    }
+        message,
+      },
+    },
   };
 }

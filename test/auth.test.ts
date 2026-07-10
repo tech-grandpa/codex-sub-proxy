@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import { validateProxyAuth } from "../src/auth.js";
 import { HttpError } from "../src/http.js";
@@ -13,6 +13,6 @@ test("validateProxyAuth requires exact bearer token when PROXY_API_KEY is set", 
 
   assert.throws(
     () => validateProxyAuth({ authorization: "Bearer wrong" }, "secret"),
-    (error: unknown) => error instanceof HttpError && error.status === 401
+    (error: unknown) => error instanceof HttpError && error.status === 401,
   );
 });

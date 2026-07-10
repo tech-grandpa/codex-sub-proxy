@@ -8,4 +8,10 @@ services:
     environment:
       PORT: 3000
       HOST: 0.0.0.0
+      OPENAI_TOKEN_FILE: ${OPENAI_TOKEN_FILE:-/var/lib/codex-sub-proxy/tokens.json}
+    volumes:
+      - codex-token-data:/var/lib/codex-sub-proxy
     restart: unless-stopped
+
+volumes:
+  codex-token-data:

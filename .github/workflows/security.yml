@@ -28,7 +28,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -80,4 +80,3 @@ jobs:
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image
-

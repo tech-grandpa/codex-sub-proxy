@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import { loadConfig } from "../src/config.js";
 import { buildResponsesUrl, TokenManager } from "../src/upstream.js";
@@ -7,29 +7,32 @@ import { buildResponsesUrl, TokenManager } from "../src/upstream.js";
 test("buildResponsesUrl combines configurable base URL and path cleanly", () => {
   assert.equal(
     buildResponsesUrl("https://chatgpt.com/backend-api/codex", "/v1/responses"),
-    "https://chatgpt.com/backend-api/codex/v1/responses"
+    "https://chatgpt.com/backend-api/codex/v1/responses",
   );
-  assert.equal(
-    buildResponsesUrl("https://example.test/root/", "responses"),
-    "https://example.test/root/responses"
-  );
+  assert.equal(buildResponsesUrl("https://example.test/root/", "responses"), "https://example.test/root/responses");
 });
 
 test("TokenManager refreshes access token with refresh-token OAuth shape", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const mockFetch: typeof fetch = async (input, init) => {
     requests.push({ url: String(input), init });
-    return new Response(JSON.stringify({
-      access_token: "new-access",
-      refresh_token: "new-refresh",
-      expires_in: 3600
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        access_token: "new-access",
+        refresh_token: "new-refresh",
+        expires_in: 3600,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
   };
 
-  const manager = new TokenManager(loadConfig({
-    OPENAI_REFRESH_TOKEN: "old-refresh",
-    CODEX_MODELS: "gpt-5.5"
-  }), mockFetch);
+  const manager = new TokenManager(
+    loadConfig({
+      OPENAI_REFRESH_TOKEN: "old-refresh",
+      CODEX_MODELS: "gpt-5.5",
+    }),
+    mockFetch,
+  );
 
   assert.equal(await manager.getAccessToken(), "new-access");
   assert.equal(requests.length, 1);
@@ -44,4 +47,18 @@ test("TokenManager refreshes access token with refresh-token OAuth shape", async
 
   assert.equal(await manager.getAccessToken(), "new-access");
   assert.equal(requests.length, 1);
+});
+
+test("TokenManager refreshes access tokens whose expiry is unknown when a refresh token is available", async () => {
+  let refreshes = 0;
+  const mockFetch: typeof fetch = async () => {
+    refreshes += 1;
+    return new Response(JSON.stringify({ access_token: "fresh", expires_in: 3600 }), { status: 200 });
+  };
+  const manager = new TokenManager(
+    loadConfig({ OPENAI_ACCESS_TOKEN: "unknown-expiry", OPENAI_REFRESH_TOKEN: "refresh" }),
+    mockFetch,
+  );
+  assert.equal(await manager.getAccessToken(), "fresh");
+  assert.equal(refreshes, 1);
 });

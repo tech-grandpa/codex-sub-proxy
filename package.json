@@ -8,16 +8,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "format:check": "biome format . --check",
+    "check": "biome check . && npm run check:runtime",
+    "check:runtime": "node scripts/check-node-version.mjs",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "start": "node dist/src/server.js",
     "login": "node dist/src/cli/login.js",
     "smoke": "./scripts/smoke-test.sh"
   },
   "engines": {
-    "node": ">=22"
+    "node": "26.5.0"
   },
   "devDependencies": {
-    "@types/node": "^25.8.0",
-    "typescript": "^6.0.3"
+    "@biomejs/biome": "^2.5.3",
+    "@types/node": "26.1.1",
+    "typescript": "^7.0.2"
   }
 }

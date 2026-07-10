@@ -23,6 +23,8 @@ It is designed to be easy to run as a Docker sidecar, easy to audit, and honest 
 - [Configuration](#configuration)
 - [Examples](#examples)
 - [Web Search](#web-search)
+- [Function Tools and Rich Output](#function-tools-and-rich-output)
+- [Operations](#operations)
 - [Files](#files)
 - [Smoke Test](#smoke-test)
 - [Client Configuration](#client-configuration)
@@ -155,6 +157,7 @@ docker rm -f codex-sub-proxy
 | Route | Status | Notes |
 | --- | --- | --- |
 | `GET /healthz` | Supported | Health check |
+| `GET /metrics` | Supported | Authenticated Prometheus metrics |
 | `GET /v1/models` | Supported | Returns the configured local model list |
 | `POST /v1/responses` | Supported | Streaming, non-streaming, and hosted `web_search` tools |
 | `POST /v1/chat/completions` | Supported | Streaming, non-streaming, and `web_search_options` compatibility |
@@ -178,11 +181,13 @@ private ChatGPT/Codex Responses backend
 The proxy:
 
 - refreshes ChatGPT OAuth access tokens with `OPENAI_REFRESH_TOKEN`
+- atomically persists rotated credentials when `OPENAI_TOKEN_FILE` is configured and coordinates refreshes through a cross-process lock
 - authenticates callers with `PROXY_API_KEY`
 - converts chat-completion requests into Responses payloads
 - maps Chat Completions `web_search_options` to a Responses `web_search` tool
 - relays Responses SSE for streaming `/v1/responses`
 - translates upstream SSE into `chat.completion.chunk` events for streaming chat clients
+- maps function definitions, calls, tool results, refusals, annotations, usage, and non-text output between the two APIs
 - collapses upstream SSE into JSON for non-streaming clients
 - preserves inline `input_file` content parts
 - strips known unsupported upstream fields
@@ -210,9 +215,22 @@ https://chatgpt.com/backend-api/codex/responses
 | `OPENAI_ACCESS_TOKEN` | unset | No | Optional initial access token |
 | `OPENAI_EXPIRES_AT` | unset | No | Access-token expiry as Unix seconds or milliseconds |
 | `OPENAI_CHATGPT_ACCOUNT_ID` | unset | Sometimes | Optional ChatGPT account/workspace id |
+| `OPENAI_TOKEN_FILE` | unset | No | Atomic token-state file for restart-safe refresh-token rotation; Compose uses a persistent volume by default |
 | `CODEX_BASE_URL` | `https://chatgpt.com/backend-api/codex` | No | Private Codex backend base URL |
 | `CODEX_RESPONSES_PATH` | `/responses` | No | Private Codex Responses path |
 | `CODEX_MODELS` | `gpt-5.5,gpt-5.5-pro,gpt-5.4,gpt-5.4-mini` | No | Comma-separated ids returned by `/v1/models` |
+| `UPSTREAM_CONNECT_TIMEOUT_MS` | `10000` | No | Deadline for upstream headers |
+| `UPSTREAM_RESPONSE_TIMEOUT_MS` | `120000` | No | Total deadline for non-streaming upstream responses |
+| `UPSTREAM_IDLE_TIMEOUT_MS` | `30000` | No | Maximum pause between streaming chunks |
+| `SHUTDOWN_GRACE_MS` | `30000` | No | Maximum stream/request drain time during shutdown |
+| `HEADERS_TIMEOUT_MS` | `15000` | No | Incoming HTTP header deadline |
+| `REQUEST_TIMEOUT_MS` | `30000` | No | Incoming request-body deadline |
+| `KEEP_ALIVE_TIMEOUT_MS` | `5000` | No | Idle keep-alive timeout |
+| `MAX_CONCURRENT_STREAMS` | `100` | No | Per-process downstream stream limit |
+| `MAX_CONNECTIONS` | `1000` | No | Maximum simultaneous HTTP connections per process |
+| `MAX_REQUEST_BYTES` | `1000000` | No | Maximum JSON request-body size |
+
+The token file contains OAuth secrets and is created with mode `0600`. Mount its parent directory on persistent, access-controlled storage. File locking coordinates replicas only when they share that same filesystem; use a custom `TokenStore` implementation when deployments need a database or external secret manager.
 
 ## Examples
 
@@ -325,6 +343,22 @@ curl -s http://localhost:3000/v1/chat/completions \
 
 When both `tools` and `web_search_options` are present on a chat request, explicit `tools` win and `web_search_options` is removed before forwarding.
 
+## Function Tools and Rich Output
+
+Chat function definitions are flattened into Responses function tools. Assistant `tool_calls` become `function_call` input items, and `tool` messages become `function_call_output` items. Responses function calls are mapped back to Chat `tool_calls` for both streaming and non-streaming requests.
+
+Refusal text and URL annotations use the corresponding Chat message fields. Responses output types without a standard Chat Completions representation are preserved in the `response_output` extension field rather than silently discarded. Reasoning items are intentionally omitted because they are not model-visible Chat output.
+
+When `stream_options.include_usage` is true, the proxy emits the standard final empty-choice usage chunk. Responses token counts are translated to Chat `prompt_tokens`, `completion_tokens`, and `total_tokens` names.
+
+## Operations
+
+Every response includes `X-Request-Id`; a valid caller-supplied ID is preserved. Logs are structured JSON and redact authorization, token, secret, API-key, body, and payload fields. Request paths use bounded route labels rather than raw unknown URLs.
+
+`GET /metrics` requires the same bearer authentication as model routes and exposes request counts/latency, classified upstream outcomes/latency, and the active-stream gauge in Prometheus format.
+
+`SIGTERM` and `SIGINT` stop new connections, close idle sockets, drain active work for `SHUTDOWN_GRACE_MS`, and then force-close remaining connections.
+
 ## Files
 
 The proxy does not implement OpenAI's `/v1/files` upload/list/delete API. Those routes return `501`.
@@ -396,10 +430,13 @@ Use `/v1/chat/completions` for older clients. Use `/v1/responses` when your clie
 
 Use npm only when changing or testing the project locally:
 
+The supported development runtime is pinned in `.node-version` and matches the production container exactly. Version managers such as `nodenv`, `asdf`, and `mise` can read this file directly.
+
 ```sh
 npm install
 npm test
 npm run typecheck
+npm run check
 npm run build
 npm start
 ```
@@ -453,8 +490,9 @@ GitHub Actions are defined in:
 On every push and pull request:
 
 - verify whether the change is documentation-only
-- install Node.js 22 dependencies with `npm ci` when code paths changed
-- run `npm test` when code paths changed
+- install dependencies and run checks with the exact production Node version from `.node-version`
+- build the Docker `test` target so tests also run on the same pinned Alpine image as production
+- run type, lint, and formatting checks when code paths changed
 - build the Docker image without pushing it when code paths changed
 
 On pushes to `main` and pull requests targeting `main`:

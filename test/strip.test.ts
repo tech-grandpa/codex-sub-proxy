@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import { stripUnsupportedParams } from "../src/strip.js";
 
@@ -11,11 +11,14 @@ test("stripUnsupportedParams removes Codex-unsupported Responses parameters", ()
     metadata: { a: "b" },
     prompt_cache_retention: "24h",
     service_tier: "auto",
-    temperature: 0.4
+    temperature: 0.4,
+    n: 1,
+    stop: ["done"],
+    logprobs: true,
   });
 
   assert.deepEqual(stripped, {
     model: "gpt-5.5",
-    input: "hello"
+    input: "hello",
   });
 });

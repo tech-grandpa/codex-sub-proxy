@@ -57,11 +57,17 @@ async function main(): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = token.expires_at ?? (token.expires_in ? now + token.expires_in : undefined);
 
-  console.log(JSON.stringify({
-    refresh_token: token.refresh_token,
-    access_token: token.access_token,
-    expires_at: expiresAt
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        refresh_token: token.refresh_token,
+        access_token: token.access_token,
+        expires_at: expiresAt,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 async function startDeviceAuth(): Promise<DeviceAuthResponse> {
@@ -69,12 +75,12 @@ async function startDeviceAuth(): Promise<DeviceAuthResponse> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "User-Agent": USER_AGENT
+      "User-Agent": USER_AGENT,
     },
-    body: JSON.stringify({ client_id: CLIENT_ID })
+    body: JSON.stringify({ client_id: CLIENT_ID }),
   });
 
-  const data = await response.json() as DeviceAuthResponse;
+  const data = (await response.json()) as DeviceAuthResponse;
   if (!response.ok) {
     throw new Error(`Device auth failed with status ${response.status}: ${JSON.stringify(data)}`);
   }
@@ -92,15 +98,15 @@ async function pollForCode(device: DeviceAuthResponse): Promise<PollResponse> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": USER_AGENT
+        "User-Agent": USER_AGENT,
       },
       body: JSON.stringify({
         device_auth_id: device.device_auth_id,
-        user_code: device.user_code
-      })
+        user_code: device.user_code,
+      }),
     });
 
-    const data = await response.json() as PollResponse;
+    const data = (await response.json()) as PollResponse;
     if (response.ok && (data.authorization_code || data.code)) {
       return data;
     }
@@ -123,19 +129,19 @@ async function exchangeAuthorizationCode(code: string, codeVerifier: string): Pr
     code,
     redirect_uri: REDIRECT_URI,
     client_id: CLIENT_ID,
-    code_verifier: codeVerifier
+    code_verifier: codeVerifier,
   });
 
   const response = await fetch(`${AUTH_BASE_URL}/oauth/token`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": USER_AGENT
+      "User-Agent": USER_AGENT,
     },
-    body
+    body,
   });
 
-  const data = await response.json() as OAuthTokenResponse;
+  const data = (await response.json()) as OAuthTokenResponse;
   if (!response.ok) {
     throw new Error(`OAuth exchange failed with status ${response.status}: ${JSON.stringify(data)}`);
   }
@@ -146,7 +152,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function resolveVerificationUrl(device: Pick<DeviceAuthResponse, "verification_uri_complete" | "verification_uri" | "verification_url">): string {
+export function resolveVerificationUrl(
+  device: Pick<DeviceAuthResponse, "verification_uri_complete" | "verification_uri" | "verification_url">,
+): string {
   return device.verification_uri_complete ?? device.verification_uri ?? device.verification_url ?? CODEX_DEVICE_URL;
 }
 

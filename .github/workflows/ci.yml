@@ -18,11 +18,10 @@ env:
 
 jobs:
   test:
-    name: Test
+    name: Test (production Node)
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.changes.outputs.docs_only }}
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -92,7 +91,7 @@ jobs:
         if: steps.changes.outputs.docs_only != 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -102,6 +101,10 @@ jobs:
       - name: Run tests
         if: steps.changes.outputs.docs_only != 'true'
         run: npm test
+
+      - name: Run type and code-quality checks
+        if: steps.changes.outputs.docs_only != 'true'
+        run: npm run typecheck && npm run check
 
   docker:
     name: Build and publish Docker image
@@ -124,6 +127,10 @@ jobs:
       - name: Set up Docker Buildx
         if: needs.test.outputs.docs_only != 'true'
         uses: docker/setup-buildx-action@v4
+
+      - name: Test production-equivalent image
+        if: needs.test.outputs.docs_only != 'true'
+        run: docker build --target test -t codex-sub-proxy:test .
 
       - name: Log in to GitHub Container Registry
         if: needs.test.outputs.docs_only != 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
