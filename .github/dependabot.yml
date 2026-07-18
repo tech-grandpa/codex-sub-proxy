@@ -3,6 +3,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     open-pull-requests-limit: 10
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
       day: monday
@@ -28,6 +29,13 @@ updates:
       day: monday
       time: "06:15"
       timezone: Europe/Berlin
+    groups:
+      docker-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
     commit-message:
@@ -41,6 +49,13 @@ updates:
       day: monday
       time: "06:30"
       timezone: Europe/Berlin
+    groups:
+      actions-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
     commit-message:

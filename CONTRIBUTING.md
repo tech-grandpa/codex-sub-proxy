@@ -65,7 +65,7 @@ npm run test:coverage
 npm run typecheck
 ```
 
-Coverage is measured only across compiled files under `dist/src/**`. CI currently requires at least 80% line, 85% branch, and 85% function coverage.
+Coverage is measured only across freshly compiled files under `dist/src/**`. CI currently requires at least 84% line, 90% branch, and 85% function coverage.
 
 ## Dependency Updates
 
