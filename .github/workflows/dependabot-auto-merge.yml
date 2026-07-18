@@ -11,9 +11,13 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   metadata:
-    name: Read Dependabot metadata
+    name: Read Dependabot metadata and verify commits
     if: >-
       github.repository == 'tech-grandpa/codex-sub-proxy' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
@@ -21,7 +25,8 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
-      maintainer_changes: ${{ steps.metadata.outputs.maintainer-changes }}
+      package_maintainer_changes: ${{ steps.metadata.outputs.maintainer-changes }}
+      trusted_commits: ${{ steps.commits.outputs.trusted }}
       update_type: ${{ steps.metadata.outputs.update-type }}
 
     steps:
@@ -32,11 +37,49 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # `maintainer-changes` reports package publisher changes, not extra PR commits.
+      # Verify every commit independently so a human-modified Dependabot branch fails closed.
+      - name: Verify every pull request commit
+        id: commits
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          trusted=true
+          count=0
+          while IFS=$'\t' read -r author committer verified reason; do
+            count=$((count + 1))
+            if [[ "$author" != 'dependabot[bot]' ||
+                  "$committer" != 'web-flow' ||
+                  "$verified" != 'true' ||
+                  "$reason" != 'valid' ]]; then
+              trusted=false
+            fi
+          done < <(
+            gh api --paginate \
+              "repos/$REPOSITORY/pulls/$PR_NUMBER/commits?per_page=100" \
+              --jq '.[] | [(.author.login // ""), (.committer.login // ""), (.commit.verification.verified | tostring), (.commit.verification.reason // "")] | @tsv'
+          )
+
+          if [[ "$count" -eq 0 ]]; then
+            trusted=false
+          fi
+
+          echo "Verified $count pull request commit(s); trusted=$trusted"
+          echo "trusted=$trusted" >> "$GITHUB_OUTPUT"
+
   enable-auto-merge:
-    name: Enable auto-merge for non-major updates
+    name: Enable auto-merge for trusted non-major updates
     needs: metadata
     if: >-
-      needs.metadata.outputs.maintainer_changes == 'false' &&
+      github.actor == 'dependabot[bot]' &&
+      needs.metadata.outputs.package_maintainer_changes == 'false' &&
+      needs.metadata.outputs.trusted_commits == 'true' &&
       (needs.metadata.outputs.update_type == 'version-update:semver-patch' ||
       needs.metadata.outputs.update_type == 'version-update:semver-minor')
     runs-on: ubuntu-latest
@@ -56,9 +99,14 @@ jobs:
         run: gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
 
   disable-auto-merge:
-    name: Disable auto-merge after maintainer changes
+    name: Disable auto-merge for trust-sensitive changes
     needs: metadata
-    if: needs.metadata.outputs.maintainer_changes == 'true'
+    if: >-
+      always() &&
+      needs.metadata.result != 'skipped' &&
+      (needs.metadata.result != 'success' ||
+      needs.metadata.outputs.package_maintainer_changes == 'true' ||
+      needs.metadata.outputs.trusted_commits != 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -68,9 +116,16 @@ jobs:
     steps:
       - name: Disable existing auto-merge request
         env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --disable-auto "$PR_URL"
+        run: |
+          current_head_sha="$(gh pr view "$PR_URL" --json headRefOid --jq '.headRefOid')"
+          if [[ "$current_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "Pull request head changed; leaving the newer auto-merge state untouched."
+            exit 0
+          fi
+          gh pr merge --disable-auto "$PR_URL"
 
   report-major-update:
     name: Leave major updates for manual review
