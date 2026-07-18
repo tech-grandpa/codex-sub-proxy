@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "test:coverage": "npm run build && node --experimental-test-coverage --test --test-coverage-include=\"dist/src/**/*.js\" --test-coverage-lines=80 --test-coverage-branches=85 --test-coverage-functions=85 \"dist/**/*.test.js\"",
     "start": "node dist/src/server.js",
     "login": "node dist/src/cli/login.js",
     "smoke": "./scripts/smoke-test.sh"

@@ -99,9 +99,9 @@ jobs:
         if: steps.changes.outputs.docs_only != 'true'
         run: npm ci
 
-      - name: Run tests
+      - name: Run tests with coverage gates
         if: steps.changes.outputs.docs_only != 'true'
-        run: npm test
+        run: npm run test:coverage
 
   docker:
     name: Build and publish Docker image

@@ -143,14 +143,7 @@ test("POST /v1/chat/completions maps web_search_options before forwarding", asyn
 });
 
 test("file upload endpoints report an explicit unsupported response", async () => {
-  const forwarder: ResponsesForwarder = {
-    async forward() {
-      throw new Error("unexpected forward");
-    },
-    async stream() {
-      throw new Error("unexpected stream");
-    }
-  };
+  const forwarder = unexpectedForwarder();
 
   await withServer(forwarder, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/v1/files`, {
@@ -167,6 +160,133 @@ test("file upload endpoints report an explicit unsupported response", async () =
     });
   });
 });
+
+test("health check bypasses caller authentication", async () => {
+  await withServer(unexpectedForwarder(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/healthz`);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
+  });
+});
+
+test("models endpoint requires authentication and lists configured models", async () => {
+  await withServer(unexpectedForwarder(), async (baseUrl) => {
+    const unauthorized = await fetch(`${baseUrl}/v1/models`);
+    assert.equal(unauthorized.status, 401);
+    assert.deepEqual(await unauthorized.json(), {
+      error: { type: "unauthorized", message: "Missing or invalid bearer token" }
+    });
+
+    const response = await fetch(`${baseUrl}/v1/models`, {
+      headers: { Authorization: "Bearer secret" }
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      object: "list",
+      data: [{ id: "gpt-5.5", object: "model", created: 0, owned_by: "openai" }]
+    });
+  });
+});
+
+test("non-streaming responses are forwarded with stream disabled", async () => {
+  let forwardedPayload: Record<string, unknown> | undefined;
+  const forwarder: ResponsesForwarder = {
+    async forward(payload) {
+      forwardedPayload = payload;
+      return { id: "resp_1", output_text: "ok" };
+    },
+    async stream() {
+      throw new Error("unexpected stream");
+    }
+  };
+
+  await withServer(forwarder, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ model: "gpt-5.5", input: "hello" })
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { id: "resp_1", output_text: "ok" });
+  });
+
+  assert.deepEqual(forwardedPayload, { model: "gpt-5.5", input: "hello", stream: false });
+});
+
+test("non-streaming chat completions translate the upstream response", async () => {
+  const forwarder: ResponsesForwarder = {
+    async forward() {
+      return { output_text: "hello back", status: "incomplete", usage: { total_tokens: 4 } };
+    },
+    async stream() {
+      throw new Error("unexpected stream");
+    }
+  };
+
+  await withServer(forwarder, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "hello" }] })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      choices: Array<{
+        message: { content: string };
+        finish_reason: string;
+      }>;
+      usage: unknown;
+    };
+    assert.equal(body.choices[0]?.message.content, "hello back");
+    assert.equal(body.choices[0]?.finish_reason, "length");
+    assert.deepEqual(body.usage, { total_tokens: 4 });
+  });
+});
+
+test("invalid JSON and unknown routes return OpenAI-shaped errors", async () => {
+  await withServer(unexpectedForwarder(), async (baseUrl) => {
+    const invalidJson = await fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json"
+      },
+      body: "not-json"
+    });
+    assert.equal(invalidJson.status, 400);
+    assert.deepEqual(await invalidJson.json(), {
+      error: { type: "invalid_json", message: "Request body must be valid JSON" }
+    });
+
+    const missing = await fetch(`${baseUrl}/missing`, {
+      headers: { Authorization: "Bearer secret" }
+    });
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), {
+      error: { type: "not_found", message: "Route not found" }
+    });
+  });
+});
+
+function unexpectedForwarder(): ResponsesForwarder {
+  return {
+    async forward() {
+      throw new Error("unexpected forward");
+    },
+    async stream() {
+      throw new Error("unexpected stream");
+    }
+  };
+}
 
 async function withServer(forwarder: ResponsesForwarder, run: (baseUrl: string) => Promise<void>): Promise<void> {
   const server = createServer(createApp({ config: testConfig, forwarder }));
