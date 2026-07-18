@@ -6,9 +6,11 @@
   "license": "Apache-2.0",
   "description": "Small-footprint OpenAI-compatible proxy for ChatGPT/Codex subscription-backed models.",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "test:coverage": "npm run build && node --experimental-test-coverage --test --test-coverage-include=\"dist/src/**/*.js\" --test-coverage-lines=84 --test-coverage-branches=90 --test-coverage-functions=85 \"dist/**/*.test.js\"",
     "start": "node dist/src/server.js",
     "login": "node dist/src/cli/login.js",
     "smoke": "./scripts/smoke-test.sh"

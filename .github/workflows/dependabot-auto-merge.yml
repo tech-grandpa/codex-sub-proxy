@@ -1,0 +1,82 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  metadata:
+    name: Read Dependabot metadata
+    if: >-
+      github.repository == 'tech-grandpa/codex-sub-proxy' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      maintainer_changes: ${{ steps.metadata.outputs.maintainer-changes }}
+      update_type: ${{ steps.metadata.outputs.update-type }}
+
+    steps:
+      # This read-only job intentionally does not check out or execute pull-request code.
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  enable-auto-merge:
+    name: Enable auto-merge for non-major updates
+    needs: metadata
+    if: >-
+      needs.metadata.outputs.maintainer_changes == 'false' &&
+      (needs.metadata.outputs.update_type == 'version-update:semver-patch' ||
+      needs.metadata.outputs.update_type == 'version-update:semver-minor')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # Enable native auto-merge while required checks are pending. GitHub then performs
+      # the merge only after the protected main branch's required checks succeed.
+      - name: Enable squash auto-merge for the current head commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
+
+  disable-auto-merge:
+    name: Disable auto-merge after maintainer changes
+    needs: metadata
+    if: needs.metadata.outputs.maintainer_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Disable existing auto-merge request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --disable-auto "$PR_URL"
+
+  report-major-update:
+    name: Leave major updates for manual review
+    needs: metadata
+    if: needs.metadata.outputs.update_type == 'version-update:semver-major'
+    runs-on: ubuntu-latest
+
+    steps:
+      - run: echo "Major dependency update detected; manual review is required."

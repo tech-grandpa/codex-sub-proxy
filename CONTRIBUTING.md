@@ -50,6 +50,27 @@ Documentation-only paths are:
 - `docs/**`
 - `.github/*.md`
 
+## Tests
+
+Run the fast suite during development:
+
+```bash
+npm test
+```
+
+Before opening a pull request, run the same coverage and type checks used by CI:
+
+```bash
+npm run test:coverage
+npm run typecheck
+```
+
+Coverage is measured only across freshly compiled files under `dist/src/**`. CI currently requires at least 84% line, 90% branch, and 85% function coverage.
+
+## Dependency Updates
+
+Dependabot checks npm, Docker, and GitHub Actions dependencies every Monday. Patch and minor updates are eligible for native squash auto-merge after every required status check passes. Major updates always require manual review.
+
 ## Docker Images
 
 Feature branches are transient. They run verification, but they do not publish persistent Docker images.
