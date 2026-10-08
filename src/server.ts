@@ -61,7 +61,18 @@ export function createApp(deps: AppDeps) {
         const payload = requireObject(await readJson(req));
         const responsesPayload = chatToResponsesPayload(payload);
         if (payload.stream === true) {
-          await sendChatCompletionStream(res, await deps.forwarder.stream(responsesPayload), responsesPayload.model);
+          const streamOptions = payload.stream_options;
+          const includeUsage =
+            typeof streamOptions === "object" &&
+            streamOptions !== null &&
+            !Array.isArray(streamOptions) &&
+            (streamOptions as Record<string, unknown>).include_usage === true;
+          await sendChatCompletionStream(
+            res,
+            await deps.forwarder.stream(responsesPayload),
+            responsesPayload.model,
+            includeUsage
+          );
           return;
         }
         const upstream = await deps.forwarder.forward({ ...responsesPayload, stream: false });
@@ -84,7 +95,12 @@ async function sendResponsesStream(res: ServerResponse, upstream: Response): Pro
   await pipeReadableStream(upstream.body, res);
 }
 
-async function sendChatCompletionStream(res: ServerResponse, upstream: Response, model: string): Promise<void> {
+async function sendChatCompletionStream(
+  res: ServerResponse,
+  upstream: Response,
+  model: string,
+  includeUsage = false
+): Promise<void> {
   writeSseHead(res);
 
   const id = `chatcmpl_${randomUUID().replaceAll("-", "")}`;
@@ -93,6 +109,71 @@ async function sendChatCompletionStream(res: ServerResponse, upstream: Response,
 
   const decoder = new TextDecoder();
   let buffer = "";
+  const toolCallIndexes = new Map<number, number>();
+  let nextToolCallIndex = 0;
+  let sawFunctionCall = false;
+  let terminalStatus: string | undefined;
+  let usage: unknown;
+
+  const handleEvent = (event: Record<string, unknown>): void => {
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      writeChatChunk(res, { id, created, model, delta: { content: event.delta }, finishReason: null });
+      return;
+    }
+
+    if (event.type === "response.output_item.added") {
+      const item = event.item;
+      if (typeof item === "object" && item !== null && (item as Record<string, unknown>).type === "function_call") {
+        const itemObject = item as Record<string, unknown>;
+        sawFunctionCall = true;
+        const chatIndex = nextToolCallIndex;
+        nextToolCallIndex += 1;
+        if (typeof event.output_index === "number") {
+          toolCallIndexes.set(event.output_index, chatIndex);
+        }
+        writeChatChunk(res, {
+          id,
+          created,
+          model,
+          delta: {
+            tool_calls: [
+              {
+                index: chatIndex,
+                id: typeof itemObject.call_id === "string" ? itemObject.call_id : itemObject.id,
+                type: "function",
+                function: { name: typeof itemObject.name === "string" ? itemObject.name : "", arguments: "" }
+              }
+            ]
+          },
+          finishReason: null
+        });
+      }
+      return;
+    }
+
+    if (event.type === "response.function_call_arguments.delta" && typeof event.delta === "string") {
+      const mapped = typeof event.output_index === "number" ? toolCallIndexes.get(event.output_index) : undefined;
+      const chatIndex = mapped ?? nextToolCallIndex - 1;
+      writeChatChunk(res, {
+        id,
+        created,
+        model,
+        delta: { tool_calls: [{ index: chatIndex, function: { arguments: event.delta } }] },
+        finishReason: null
+      });
+      return;
+    }
+
+    if (event.type === "response.completed") {
+      const response = event.response;
+      if (typeof response === "object" && response !== null) {
+        const responseObject = response as Record<string, unknown>;
+        if (typeof responseObject.status === "string") terminalStatus = responseObject.status;
+        if (responseObject.usage !== undefined) usage = responseObject.usage;
+      }
+      return;
+    }
+  };
 
   if (upstream.body) {
     const reader = upstream.body.getReader();
@@ -101,11 +182,7 @@ async function sendChatCompletionStream(res: ServerResponse, upstream: Response,
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        buffer = processResponsesSseBlocks(buffer, (event) => {
-          if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-            writeChatChunk(res, { id, created, model, delta: { content: event.delta }, finishReason: null });
-          }
-        });
+        buffer = processResponsesSseBlocks(buffer, handleEvent);
       }
     } finally {
       reader.releaseLock();
@@ -113,14 +190,21 @@ async function sendChatCompletionStream(res: ServerResponse, upstream: Response,
   }
 
   if (buffer) {
-    processResponsesSseBlocks(`${buffer}\n\n`, (event) => {
-      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-        writeChatChunk(res, { id, created, model, delta: { content: event.delta }, finishReason: null });
-      }
-    });
+    processResponsesSseBlocks(`${buffer}\n\n`, handleEvent);
   }
 
-  writeChatChunk(res, { id, created, model, delta: {}, finishReason: "stop" });
+  const finishReason = sawFunctionCall ? "tool_calls" : terminalStatus === "incomplete" ? "length" : "stop";
+  writeChatChunk(res, { id, created, model, delta: {}, finishReason });
+  if (includeUsage && usage !== undefined) {
+    res.write(`data: ${JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [],
+      usage
+    })}\n\n`);
+  }
   res.write("data: [DONE]\n\n");
   res.end();
 }
