@@ -1,5 +1,5 @@
 import { USER_AGENT, type Config } from "./config.js";
-import { HttpError } from "./http.js";
+import { HttpError, isPlainObject } from "./http.js";
 import { stripUnsupportedParams } from "./strip.js";
 import { buildResponsesUrl, TokenManager } from "./upstream.js";
 
@@ -88,8 +88,9 @@ async function readUpstreamResponse(response: Response): Promise<unknown> {
 }
 
 function parseResponsesSse(text: string): unknown {
-  let completedResponse: Record<string, unknown> | undefined;
+  let finalResponse: Record<string, unknown> | undefined;
   let outputText = "";
+  const outputItems: unknown[] = [];
 
   for (const block of text.split(/\r?\n\r?\n/)) {
     const dataLines = block
@@ -108,7 +109,9 @@ function parseResponsesSse(text: string): unknown {
       continue;
     }
 
-    if (typeof event.delta === "string") {
+    // Only text deltas belong in output_text; function-call argument and
+    // reasoning deltas also use a string `delta` field.
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
       outputText += event.delta;
     }
 
@@ -116,14 +119,44 @@ function parseResponsesSse(text: string): unknown {
       outputText = event.text;
     }
 
-    if (event.type === "response.completed" && event.response && typeof event.response === "object") {
-      completedResponse = event.response as Record<string, unknown>;
+    if (event.type === "response.output_item.done" && isPlainObject(event.item)) {
+      outputItems.push(event.item);
+    }
+
+    if (event.type === "error") {
+      throw upstreamFailure(event);
+    }
+
+    if (event.type === "response.failed") {
+      throw upstreamFailure(isPlainObject(event.response) ? event.response.error : undefined);
+    }
+
+    if ((event.type === "response.completed" || event.type === "response.incomplete") && isPlainObject(event.response)) {
+      finalResponse = event.response;
     }
   }
 
-  if (completedResponse) {
-    return outputText ? { ...completedResponse, output_text: outputText } : completedResponse;
+  if (finalResponse) {
+    const result = { ...finalResponse };
+    // The backend may omit output items from the terminal event; rebuild them
+    // from the streamed output_item.done events.
+    if ((!Array.isArray(result.output) || result.output.length === 0) && outputItems.length > 0) {
+      result.output = outputItems;
+    }
+    if (outputText) result.output_text = outputText;
+    return result;
   }
 
   return outputText ? { output_text: outputText, status: "completed" } : {};
+}
+
+export function upstreamFailureMessage(error: unknown): string {
+  if (isPlainObject(error) && typeof error.message === "string" && error.message) {
+    return `Codex upstream response failed: ${error.message}`;
+  }
+  return "Codex upstream response failed";
+}
+
+function upstreamFailure(error: unknown): HttpError {
+  return new HttpError(502, "upstream_error", upstreamFailureMessage(error));
 }

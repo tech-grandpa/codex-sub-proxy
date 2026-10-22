@@ -3,9 +3,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import { validateProxyAuth } from "./auth.js";
 import { loadConfig, type Config } from "./config.js";
-import { chatToResponsesPayload, responsesToChatCompletion } from "./chat.js";
-import { errorResponse, HttpError, notImplemented, readJson, requireObject, sendJson } from "./http.js";
-import { CodexResponsesForwarder, type ResponsesForwarder } from "./responses.js";
+import { chatFinishReason, chatToResponsesPayload, responsesToChatCompletion, toChatUsage, toolCallId } from "./chat.js";
+import { errorResponse, HttpError, isPlainObject, notImplemented, readJson, requireObject, sendJson } from "./http.js";
+import { CodexResponsesForwarder, upstreamFailureMessage, type ResponsesForwarder } from "./responses.js";
 import { TokenManager } from "./upstream.js";
 
 export interface AppDeps {
@@ -61,7 +61,14 @@ export function createApp(deps: AppDeps) {
         const payload = requireObject(await readJson(req));
         const responsesPayload = chatToResponsesPayload(payload);
         if (payload.stream === true) {
-          await sendChatCompletionStream(res, await deps.forwarder.stream(responsesPayload), responsesPayload.model);
+          const streamOptions = payload.stream_options;
+          const includeUsage = isPlainObject(streamOptions) && streamOptions.include_usage === true;
+          await sendChatCompletionStream(
+            res,
+            await deps.forwarder.stream(responsesPayload),
+            responsesPayload.model,
+            includeUsage
+          );
           return;
         }
         const upstream = await deps.forwarder.forward({ ...responsesPayload, stream: false });
@@ -84,12 +91,111 @@ async function sendResponsesStream(res: ServerResponse, upstream: Response): Pro
   await pipeReadableStream(upstream.body, res);
 }
 
-async function sendChatCompletionStream(res: ServerResponse, upstream: Response, model: string): Promise<void> {
+interface StreamedToolCall {
+  index: number;
+  arguments: string;
+}
+
+async function sendChatCompletionStream(
+  res: ServerResponse,
+  upstream: Response,
+  model: string,
+  includeUsage = false
+): Promise<void> {
   writeSseHead(res);
 
   const id = `chatcmpl_${randomUUID().replaceAll("-", "")}`;
   const created = Math.floor(Date.now() / 1000);
-  writeChatChunk(res, { id, created, model, delta: { role: "assistant" }, finishReason: null });
+  const write = (delta: Record<string, unknown>, finishReason: string | null = null): void => {
+    writeChatChunk(res, { id, created, model, delta, finishReason });
+  };
+  write({ role: "assistant" });
+
+  // Tool calls are looked up by upstream item id and output index, so argument
+  // deltas always land on the chat tool_call they belong to.
+  const toolCalls: StreamedToolCall[] = [];
+  const toolCallsByKey = new Map<string, StreamedToolCall>();
+  let finalResponse: Record<string, unknown> | undefined;
+  let failure: string | undefined;
+
+  const startToolCall = (item: Record<string, unknown>, keys: string[], args: string): void => {
+    const call = { index: toolCalls.length, arguments: args };
+    toolCalls.push(call);
+    for (const key of keys) toolCallsByKey.set(key, call);
+    write({
+      tool_calls: [{
+        index: call.index,
+        id: toolCallId(item),
+        type: "function",
+        function: { name: typeof item.name === "string" ? item.name : "", arguments: args }
+      }]
+    });
+  };
+
+  const appendArguments = (call: StreamedToolCall, delta: string): void => {
+    if (!delta) return;
+    call.arguments += delta;
+    write({ tool_calls: [{ index: call.index, function: { arguments: delta } }] });
+  };
+
+  const findToolCall = (keys: string[]): StreamedToolCall | undefined => {
+    for (const key of keys) {
+      const call = toolCallsByKey.get(key);
+      if (call) return call;
+    }
+    return undefined;
+  };
+
+  const handleEvent = (event: Record<string, unknown>): void => {
+    if (failure !== undefined) return;
+
+    switch (event.type) {
+      case "response.output_text.delta":
+        if (typeof event.delta === "string") write({ content: event.delta });
+        return;
+
+      case "response.output_item.added":
+        if (isFunctionCall(event.item)) {
+          const keys = toolCallKeys(event, event.item);
+          if (!findToolCall(keys)) startToolCall(event.item, keys, "");
+        }
+        return;
+
+      case "response.function_call_arguments.delta": {
+        // Deltas for a call that was never announced are dropped here;
+        // response.output_item.done delivers that call in full.
+        const call = findToolCall(toolCallKeys(event));
+        if (call && typeof event.delta === "string") appendArguments(call, event.delta);
+        return;
+      }
+
+      case "response.output_item.done":
+        if (isFunctionCall(event.item)) {
+          const keys = toolCallKeys(event, event.item);
+          const finalArguments = typeof event.item.arguments === "string" ? event.item.arguments : "";
+          const call = findToolCall(keys);
+          if (!call) {
+            startToolCall(event.item, keys, finalArguments);
+          } else if (finalArguments.startsWith(call.arguments)) {
+            appendArguments(call, finalArguments.slice(call.arguments.length));
+          }
+        }
+        return;
+
+      case "response.completed":
+      case "response.incomplete":
+        finalResponse = isPlainObject(event.response) ? event.response : {};
+        return;
+
+      case "response.failed":
+        failure = upstreamFailureMessage(isPlainObject(event.response) ? event.response.error : undefined);
+        return;
+
+      case "error":
+        failure = upstreamFailureMessage(event);
+        return;
+    }
+  };
 
   const decoder = new TextDecoder();
   let buffer = "";
@@ -101,28 +207,51 @@ async function sendChatCompletionStream(res: ServerResponse, upstream: Response,
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        buffer = processResponsesSseBlocks(buffer, (event) => {
-          if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-            writeChatChunk(res, { id, created, model, delta: { content: event.delta }, finishReason: null });
-          }
-        });
+        buffer = processResponsesSseBlocks(buffer, handleEvent);
       }
+      if (buffer) {
+        processResponsesSseBlocks(`${buffer}\n\n`, handleEvent);
+      }
+    } catch {
+      failure ??= "Codex upstream stream was interrupted";
     } finally {
       reader.releaseLock();
     }
   }
 
-  if (buffer) {
-    processResponsesSseBlocks(`${buffer}\n\n`, (event) => {
-      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-        writeChatChunk(res, { id, created, model, delta: { content: event.delta }, finishReason: null });
-      }
-    });
+  if (failure === undefined && finalResponse === undefined) {
+    failure = "Codex upstream stream ended before the response completed";
   }
 
-  writeChatChunk(res, { id, created, model, delta: {}, finishReason: "stop" });
+  if (failure !== undefined) {
+    // Headers are already sent, so report the failure in-band the way OpenAI
+    // does; OpenAI SDKs raise an error when a chunk carries an `error` field.
+    res.write(`data: ${JSON.stringify({ error: { type: "upstream_error", message: failure } })}\n\n`);
+    res.end();
+    return;
+  }
+
+  write({}, chatFinishReason(finalResponse, toolCalls.length > 0));
+
+  const usage = includeUsage ? toChatUsage(finalResponse?.usage) : undefined;
+  if (usage) {
+    res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [], usage })}\n\n`);
+  }
+
   res.write("data: [DONE]\n\n");
   res.end();
+}
+
+function toolCallKeys(event: Record<string, unknown>, item?: Record<string, unknown>): string[] {
+  const keys: string[] = [];
+  const itemId = item?.id ?? event.item_id;
+  if (typeof itemId === "string") keys.push(`id:${itemId}`);
+  if (typeof event.output_index === "number") keys.push(`index:${event.output_index}`);
+  return keys;
+}
+
+function isFunctionCall(value: unknown): value is Record<string, unknown> {
+  return isPlainObject(value) && value.type === "function_call";
 }
 
 function writeSseHead(res: ServerResponse): void {

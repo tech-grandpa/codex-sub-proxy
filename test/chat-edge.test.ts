@@ -33,7 +33,7 @@ test("chatToResponsesPayload validates model and messages", () => {
   );
   assertInvalidRequest(
     () => chatToResponsesPayload({ model: "gpt-5.5", messages: [{ role: "tool", content: "result" }] }),
-    "Unsupported chat message role: tool"
+    "tool messages must include a tool_call_id"
   );
 });
 

@@ -248,7 +248,7 @@ test("non-streaming chat completions translate the upstream response", async () 
     };
     assert.equal(body.choices[0]?.message.content, "hello back");
     assert.equal(body.choices[0]?.finish_reason, "length");
-    assert.deepEqual(body.usage, { total_tokens: 4 });
+    assert.deepEqual(body.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 4 });
   });
 });
 

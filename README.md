@@ -157,11 +157,26 @@ docker rm -f codex-sub-proxy
 | `GET /healthz` | Supported | Health check |
 | `GET /v1/models` | Supported | Returns the configured local model list |
 | `POST /v1/responses` | Supported | Streaming, non-streaming, and hosted `web_search` tools |
-| `POST /v1/chat/completions` | Supported | Streaming, non-streaming, and `web_search_options` compatibility |
+| `POST /v1/chat/completions` | Supported | Streaming, non-streaming, function tools, and `web_search_options` compatibility |
 | `/v1/files` | Not supported | Returns `501`; use inline `input_file` parts |
 | Embeddings, audio, images, batches, Assistants | Not supported | Outside this proxy's scope |
 
 This is not a transparent full OpenAI API proxy. It is a focused compatibility shim for model calls.
+
+### Chat Completions Fields
+
+The Codex backend rejects unknown request fields, so chat requests are translated field by field instead of being forwarded as-is:
+
+| Chat field | Sent upstream as |
+| --- | --- |
+| `messages` | `instructions` (system/developer) and `input` items; assistant `tool_calls` and `tool` messages become `function_call` / `function_call_output` items |
+| `tools`, `tool_choice` | Responses function tools and tool choice |
+| `reasoning_effort` | `reasoning.effort` |
+| `response_format`, `verbosity` | `text.format`, `text.verbosity` |
+| `web_search_options` | A `web_search` tool (see [Web Search](#web-search)) |
+| `reasoning`, `text`, `parallel_tool_calls`, `prompt_cache_key`, `truncation`, `include` | Forwarded unchanged |
+
+Every other field is dropped, including `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `stop`, `n`, `seed`, `metadata`, and `store`; the Codex backend does not accept them. Responses come back with chat `tool_calls`, a `tool_calls`/`length`/`content_filter`/`stop` finish reason, and chat-style `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`). Streaming clients get usage in a final chunk when they send `stream_options: { "include_usage": true }`. If the upstream response fails mid-stream, the stream ends with an `error` chunk instead of `[DONE]`.
 
 ## How It Works
 
@@ -181,6 +196,7 @@ The proxy:
 - authenticates callers with `PROXY_API_KEY`
 - converts chat-completion requests into Responses payloads
 - maps Chat Completions `web_search_options` to a Responses `web_search` tool
+- translates chat function tools, tool calls, and tool results to and from Responses function calls
 - relays Responses SSE for streaming `/v1/responses`
 - translates upstream SSE into `chat.completion.chunk` events for streaming chat clients
 - collapses upstream SSE into JSON for non-streaming clients

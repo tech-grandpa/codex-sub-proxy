@@ -75,6 +75,10 @@ export async function readJson(req: IncomingMessage, maxBytes = 1_000_000): Prom
   }
 }
 
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function requireObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new HttpError(400, "invalid_request", "Request body must be a JSON object");
